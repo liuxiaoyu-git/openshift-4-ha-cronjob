@@ -11,8 +11,9 @@ For example lets use the situation where there are 3 OpenShift clusters with 2 a
 If a single cluster goes down each remaining cluster will increase its capacity by 1.
 If two clusters go down the remaining cluster will increase its capacity by 4.
 
-![Diagram](diagram.png)
+When the CronJob detects that the alternate clusters are helathy they will scale the application back down to its original replica count.
 
+![Diagram](diagram.png)
 
 ## Quickstart 
 
@@ -39,6 +40,14 @@ oc process -f job_template.yaml \
   -p ALTERNATE_CLUSTER_API_URL_LIST=${alternate_cluster_api_url_list} \
   -p DEPLOYMENT_NAME=${deployment_name} \
   | oc create -n ${app_project} -f -
+```
+
+## Template Parameters
+
+The list of parameters this template accepts can be listed with the following command:
+
+```shell script
+oc process --parameters -f job_template.yaml
 ```
 
 ## Miscellaneous
