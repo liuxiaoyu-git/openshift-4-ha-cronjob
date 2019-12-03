@@ -1,0 +1,228 @@
+apiVersion: v1
+kind: Template
+labels:
+  app: ha-cronjob
+  template: ha-cronjob
+metadata:
+  annotations:
+  name: ha-cronjob
+parameters:
+- displayName: This cluster API URL
+  description: This clusters API URL (e.g. "https://api.ocp4north.example.domain:6443")
+  name: THIS_CLUSTER_API_URL
+  required: true
+- displayName: Alternate cluster API URL List
+  description: Comma separated list of alternate cluster API URLs (e.g. "https://api.ocp4east.example.domain:6443,https://api.ocp4west.example.domain:6443")
+  name: ALTERNATE_CLUSTER_API_URL_LIST
+  required: true
+- displayName: Deployment or DeploymentConfig
+  description: Whether the application is deployed via Deployment of DeploymentConfig object (e.g. deployment, deploymentconfig). Must be understood by the oc cli
+  name: DEPLOYMENT_OR_DEPLOYMENTCONFIG
+  value: deploymentconfig
+- displayName: Application Deployment Name
+  description: The name of the deployment / deploymentconfig object to scale
+  name: DEPLOYMENT_NAME
+  required: true
+- displayName: Replicas per cluster
+  description: The desired number of replicas running in each cluster
+  name: REPLICAS_PER_CLUSTER
+  value: 3
+- displayName: OpenShift Version
+  description: Version of OpenShift. Must match http://mirror.openshift.com/pub/openshift-v4/clients/oc tags (e.g. 4.2, 4.2.10-201911290432.git.0.888f9c6.el7, latest)
+  name: OC_VERSION
+  value: 4.2
+objects:
+# ImageStream
+- apiVersion: image.openshift.io/v1
+  kind: ImageStream
+  metadata:
+    name: ha-cronjob-${DEPLOYMENT_NAME}
+    labels:
+      app.kubernetes.io/name: ha-cronjob
+      app.kubernetes.io/instance: ha-cronjob-${DEPLOYMENT_NAME}
+      app.kubernetes.io/version: 1.0.0
+      app.kubernetes.io/component: imagestream
+      app.kubernetes.io/part-of: ${DEPLOYMENT_NAME}
+      app.kubernetes.io/managed-by: openshift
+
+# BuildConfig
+- apiVersion: build.openshift.io/v1
+  kind: BuildConfig
+  metadata:
+    name: ha-cronjob-${DEPLOYMENT_NAME}
+    labels:
+      app.kubernetes.io/name: ha-cronjob
+      app.kubernetes.io/instance: ha-cronjob-${DEPLOYMENT_NAME}
+      app.kubernetes.io/version: 1.0.0
+      app.kubernetes.io/component: buildconfig
+      app.kubernetes.io/part-of: ${DEPLOYMENT_NAME}
+      app.kubernetes.io/managed-by: openshift
+  spec:
+    triggers:
+    - type: ConfigChange
+    source:
+      type: Dockerfile
+      dockerfile: |
+        FROM ubi8/ubi:latest
+
+        # Install ansible and OpenShift cli
+        RUN yum -y install python3-pip \
+         && pip3 install ansible \
+         && wget -O /tmp/oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/oc/${OC_VERSION}/linux/oc.tar.gz
+         && tar xvf -C /usr/bin/ /tmp/oc.tar.gz
+
+        # It is assumed the entrypoint will be configured in the job template
+    strategy:
+      type: Docker
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ha-cronjob-${DEPLOYMENT_NAME}:latest
+
+# ConfigMap
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: ha-cronjob-${DEPLOYMENT_NAME}
+    labels:
+      app.kubernetes.io/name: ha-cronjob
+      app.kubernetes.io/instance: ha-cronjob-${DEPLOYMENT_NAME}
+      app.kubernetes.io/version: 1.0.0
+      app.kubernetes.io/component: configmap
+      app.kubernetes.io/part-of: ${DEPLOYMENT_NAME}
+      app.kubernetes.io/managed-by: openshift
+  data:
+    job: |-
+      #!/usr/bin/env ansible-playbook
+      - hosts: localhost
+        gather_facts: false
+        vars:
+          # This clusters API URL (e.g. "https://api.ocp4north.example.domain:6443")
+          this_cluster_api_url: "{{ lookup('env', 'THIS_CLUSTER_API_URL') }}"
+          # Array of cluster api urls
+          clusters_array: "{{ lookup('env', 'ALTERNATE_CLUSTER_API_URL_LIST').split(',') + [lookup('env', 'THIS_CLUSTER_API_URL')] }}"
+          # Whether the application is deployed via Deployment of DeploymentConfig object (e.g. deployment, deploymentconfig). Must be understood by the oc cli
+          deployment_or_deploymentconfig: "{{ lookup('env', 'DEPLOYMENT_OR_DEPLOYMENTCONFIG') }}"
+          # The name of the deployment / deploymentconfig object to scale
+          deployment_name: "{{ lookup('env', 'DEPLOYMENT_NAME') }}"
+          # The namespace the application resides in
+          project_name: "{{ lookup('env', 'PROJECT_NAME') }}"
+          # The desired number of replicas running in each cluster
+          replicas_per_cluster: "{{ lookup('env', 'REPLICAS_PER_CLUSTER') }}"
+
+        tasks:
+        - name: Check alternate cluster statuses
+          uri:
+            url: "{{ item }}/healthz"
+            validate_certs: no
+            return_content: yes
+          loop: "{{ clusters_array }}"
+          register: get_cluster_statuses
+
+        - name: Calculate cluster counts
+          set_fact:
+            total_clusters: "{{ clusters_array | count }}"
+            healthy_clusters: "{{ get_cluster_statuses.results
+                                | map(attribute='content')
+                                | select('match', '^ok$')
+                                | list
+                                | count }}"
+            unhealthy_clusters: "{{ get_cluster_statuses.results
+                                | map(attribute='content')
+                                | select('match', '^!ok$')
+                                | list
+                                | count }}"
+
+        - debug:
+            var: (total_clusters | int * replicas_per_cluster | int) / healthy_clusters | int
+              | round(0, 'ceil')
+
+        - name: Calculated adjusted replicas per cluster
+          set_fact:
+            adjusted_replicas_per_cluster: "{{ (total_clusters | int * replicas_per_cluster | int) / healthy_clusters | int
+                                              | round(0, 'ceil')
+                                              | int }}"
+
+        - name: Log in to this cluster
+          shell: "/usr/bin/oc
+                  login
+                  --insecure-skip-tls-verify
+                  --token={{ 'tests' }}
+                  --server={{ this_cluster_api_url }}"
+          changed_when: false
+
+        - name: Get current application scale
+          shell: "/usr/bin/oc
+                  get
+                  {{ deployment_or_deploymentconfig }}/{{ deployment_name }}
+                  -o yaml
+                  -n {{ project_name }}"
+          changed_when: false
+          register: oc_get_dc
+
+        - name: Print job analysis details
+          debug:
+            msg:
+            - "Healthy Clusters: {{ healthy_clusters }}"
+            - "Unhealthy Clusters: {{ unhealthy_clusters }}"
+            - "Required application replicas in this cluster: {{ adjusted_replicas_per_cluster | int }}"
+
+        - name: Scale application based on cluster health
+          shell: "/usr/bin/oc
+                  scale
+                  {{ deployment_or_deploymentconfig }}/{{ deployment_name }}
+                  --replicas {{ adjusted_replicas_per_cluster }}
+                  -n {{ project_name }}"
+          when: (oc_get_dc.stdout | from_yaml).status.replicas | int != adjusted_replicas_per_cluster | int
+
+# CronJob
+- apiVersion: batch/v1beta1
+  kind: CronJob
+  metadata:
+    name: ha-cronjob-${DEPLOYMENT_NAME}
+    labels:
+      app.kubernetes.io/name: ha-cronjob
+      app.kubernetes.io/instance: ha-cronjob-${DEPLOYMENT_NAME}
+      app.kubernetes.io/version: 1.0.0
+      app.kubernetes.io/component: cronjob
+      app.kubernetes.io/part-of: ${DEPLOYMENT_NAME}
+      app.kubernetes.io/managed-by: openshift
+  spec:
+    # Run every 10 seconds
+    schedule: '*/10 * * * *'
+    jobTemplate:
+      spec:
+        template:
+          spec:
+            containers:
+            - name: job
+              image: ha-cronjob-${DEPLOYMENT_NAME}:latest
+              env:
+              - name: THIS_CLUSTER_API_URL
+                value: ${THIS_CLUSTER_API_URL}
+              - name: ALTERNATE_CLUSTER_API_URL_LIST
+                value: ${ALTERNATE_CLUSTER_API_URL_LIST
+              - name: DEPLOYMENT_OR_DEPLOYMENTCONFIG
+                value: ${DEPLOYMENT_OR_DEPLOYMENTCONFIG}
+              - name: DEPLOYMENT_NAME
+                value: ${DEPLOYMENT_NAME}
+              - name: PROJECT_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.namespace
+              - name: REPLICAS_PER_CLUSTER
+                value: ${REPLICAS_PER_CLUSTER}
+              command:
+              - '/jobscripts/job'
+              - '-v'
+              volumeMounts:
+              - name: job-scripts
+                mountPath: /jobscripts
+            volumes:
+            - name: job-scripts
+              configMap:
+                name: ha-cronjob-${DEPLOYMENT_NAME}
+                items:
+                - key: job
+                  path: job
+            restartPolicy: Never

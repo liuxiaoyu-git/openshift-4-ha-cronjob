@@ -2,69 +2,79 @@
 - hosts: localhost
   gather_facts: false
   vars:
-    THIS_CLUSTER_URL: https://api.ocp42.currys.cloud:6443
-    ALTERNATE_CLUSTER_URL: https://api.ocp42.currys.cloud:6443
-    SA_TOKEN: Xjw2-NJ7GzOsUOHmf0kKf8U_ImtPMLlFBdJaNM3BQDo
-    DC_NAME: httpd-example
-    PROJECT_NAME: app-a
-    STANDARD_REPLICAS: 1
-    DISASTER_REPLICAS: 5
+    this_cluster_api_url: "{{ lookup('env', 'THIS_CLUSTER_API_URL') }}"
+    # Array of cluster api urls
+    clusters_array: "{{ lookup('env', 'CLUSTER_API_URL_LIST').split(',') + [lookup('env', 'THIS_CLUSTER_API_URL')] }}"
+    # Whether the application is deployed via Deployment of DeploymentConfig object
+    deployment_or_deploymentconfig: "{{ lookup('env', 'DEPLOYMENT_OR_DEPLOYMENTCONFIG') }}"
+    # The name of the deployment / deploymentconfig object to scale
+    deployment_name: "{{ lookup('env', 'DC_NAME') }}"
+    # The namespace the application resides in
+    project_name: "{{ lookup('env', 'PROJECT_NAME') }}"
+    # The desired number of replicas running in each cluster
+    replicas_per_cluster: "{{ lookup('env', 'REPLICAS_PER_CLUSTER') }}"
+
   tasks:
-  - name: Check alternate cluster status
+  - name: Check alternate cluster statuses
     uri:
-      url: "{{ ALTERNATE_CLUSTER_URL }}/healthz"
+      url: "{{ item }}/healthz"
       validate_certs: no
       return_content: yes
-    register: get_cluster_status
+    loop: "{{ clusters_array }}"
+    register: get_cluster_statuses
 
-  - name: Alternate cluster is not reporting healthy
-    block:
-    - name: Log in to this cluster
-      shell: "/usr/bin/oc
-              login
-              --insecure-skip-tls-verify
-              --token={{ SA_TOKEN }}
-              --server={{ THIS_CLUSTER_URL }}"
+  - name: Calculate cluster counts
+    set_fact:
+      total_clusters: "{{ clusters_array | count }}"
+      healthy_clusters: "{{ get_cluster_statuses.results
+                          | map(attribute='content')
+                          | select('match', '^ok$')
+                          | list
+                          | count }}"
+      unhealthy_clusters: "{{ get_cluster_statuses.results
+                          | map(attribute='content')
+                          | select('match', '^!ok$')
+                          | list
+                          | count }}"
 
-    - name: Get current application scale
-      shell: "/usr/bin/oc
-              get
-              dc/{{ DC_NAME }}
-              -o yaml
-              -n {{ PROJECT_NAME }}"
-      register: oc_get_dc
+  - debug:
+      var: (total_clusters | int * replicas_per_cluster | int) / healthy_clusters | int
+        | round(0, 'ceil')
 
-    - name: Scale application if necessary
-      shell: "/usr/bin/oc
-              scale
-              dc/{{ DC_NAME }}
-              --replicas {{ DISASTER_REPLICAS }}
-              -n {{ PROJECT_NAME }}"
-      when: (oc_get_dc.stdout | from_yaml).status.replicas != {{ DISASTER_REPLICAS }}
-    when: get_cluster_status.content != 'ok'
+  - name: Calculated adjusted replicas per cluster
+    set_fact:
+      adjusted_replicas_per_cluster: "{{ (total_clusters | int * replicas_per_cluster | int) / healthy_clusters | int
+                                        | round(0, 'ceil')
+                                        | int }}"
 
-  - name: Alternate cluster is reporting healthy
-    block:
-    - name: Log in to this cluster
-      shell: "/usr/bin/oc
-              login
-              --insecure-skip-tls-verify
-              --token={{ SA_TOKEN }}
-              --server={{ THIS_CLUSTER_URL }}"
+  - name: Log in to this cluster
+    shell: "/usr/bin/oc
+            login
+            --insecure-skip-tls-verify
+            --token={{ 'tests' }}
+            --server={{ this_cluster_api_url }}"
+    changed_when: false
 
-    - name: Get current application scale
-      shell: "/usr/bin/oc
-              get
-              dc/{{ DC_NAME }}
-              -o yaml
-              -n {{ PROJECT_NAME }}"
-      register: oc_get_dc
+  - name: Get current application scale
+    shell: "/usr/bin/oc
+            get
+            {{ deployment_or_deploymentconfig }}/{{ deployment_name }}
+            -o yaml
+            -n {{ project_name }}"
+    changed_when: false
+    register: oc_get_dc
 
-    - name: Scale application if necessary
-      shell: "/usr/bin/oc
-              scale
-              dc/{{ DC_NAME }}
-              --replicas {{ DISASTER_REPLICAS }}
-              -n {{ PROJECT_NAME }}"
-      when: (oc_get_dc.stdout | from_yaml).status.replicas != {{ STANDARD_REPLICAS }}
-    when: get_cluster_status.content == 'ok'
+  - name: Print job analysis details
+    debug:
+      msg:
+      - "Healthy Clusters: {{ healthy_clusters }}"
+      - "Unhealthy Clusters: {{ unhealthy_clusters }}"
+      - "Required application replicas in this cluster: {{ adjusted_replicas_per_cluster | int }}"
+
+  - name: Scale application based on cluster health
+    shell: "/usr/bin/oc
+            scale
+            {{ deployment_or_deploymentconfig }}/{{ deployment_name }}
+            --replicas {{ adjusted_replicas_per_cluster }}
+            -n {{ project_name }}"
+    when: (oc_get_dc.stdout | from_yaml).status.replicas | int != adjusted_replicas_per_cluster | int
