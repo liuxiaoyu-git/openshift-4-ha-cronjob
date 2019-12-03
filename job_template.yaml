@@ -1,18 +1,17 @@
 apiVersion: v1
 kind: Template
-labels:
-  app: ha-cronjob
-  template: ha-cronjob
 metadata:
-  annotations:
   name: ha-cronjob
+  labels:
+    app: ha-cronjob
+    template: ha-cronjob
 parameters:
 - displayName: This cluster API URL
-  description: This clusters API URL (e.g. "https://api.ocp4north.example.domain:6443")
+  description: This clusters API URL (e.g. 'https://api.ocp4north.example.domain:6443')
   name: THIS_CLUSTER_API_URL
   required: true
 - displayName: Alternate cluster API URL List
-  description: Comma separated list of alternate cluster API URLs (e.g. "https://api.ocp4east.example.domain:6443,https://api.ocp4west.example.domain:6443")
+  description: Comma separated list of alternate cluster API URLs (e.g. 'https://api.ocp4east.example.domain:6443,https://api.ocp4west.example.domain:6443')
   name: ALTERNATE_CLUSTER_API_URL_LIST
   required: true
 - displayName: Deployment or DeploymentConfig
