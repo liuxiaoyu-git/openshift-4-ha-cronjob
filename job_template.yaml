@@ -148,10 +148,6 @@ objects:
                                 | list
                                 | count }}"
 
-        - debug:
-            var: (total_clusters | int * replicas_per_cluster | int) / healthy_clusters | int
-              | round(0, 'ceil')
-
         - name: Calculated adjusted replicas per cluster
           set_fact:
             adjusted_replicas_per_cluster: "{{ (total_clusters | int * replicas_per_cluster | int) / healthy_clusters | int
