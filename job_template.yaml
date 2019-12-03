@@ -187,7 +187,7 @@ objects:
           shell: "/usr/bin/oc
                   scale
                   {{ deployment_or_deploymentconfig }}/{{ deployment_name }}
-                  --replicas {{ adjusted_replicas_per_cluster }}
+                  --replicas {{ adjusted_replicas_per_cluster | int }}
                   -n {{ project_name }}"
           when: (oc_get_dc.stdout | from_yaml).status.replicas | int != adjusted_replicas_per_cluster | int
 

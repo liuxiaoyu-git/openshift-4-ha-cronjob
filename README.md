@@ -1,9 +1,27 @@
+# OpenShift 4 HA CronJob
+
+OpenShift template to deploy a CronJob suitable for maintaining a desired number of application replicas accross multiple OpenShift clusters.
+
+## What is the purpose of this template?
+
+A CronJob is configured in each OpenShift cluster. The purpose of this CronJob is to ping the /healthz endpoint of each _other_ OpenShift cluster to determine whether it is still reporting as healthy. If an OpenShift cluster is no longer reporting healthy the CronJob will automatically scale the designated application to accommodate the missing replicas. 
+
+For example lets use the situation where there are 3 OpenShift clusters with 2 application replicas in each.
+
+If a single cluster goes down each remaining cluster will increase its capacity by 1.
+If two clusters go down the remaining cluster will increase its capacity by 4.
+
+![Diagram](diagram.png)
+
+
+## Quickstart 
+
+The following should be done for each OpenShift cluster. 
+
 ```shell script
-# Create applications
+# Create application
 oc new-project app-a
 oc new-app httpd-example -n app-a
-oc new-project app-b
-oc new-app httpd-example -n app-b
 
 # Set environment specific parameters
 this_cluster_api_url=https://api.ocp4north.example.domain:6443
@@ -21,7 +39,10 @@ oc process -f job_template.yaml \
   -p ALTERNATE_CLUSTER_API_URL_LIST=${alternate_cluster_api_url_list} \
   -p DEPLOYMENT_NAME=${deployment_name} \
   | oc create -n ${app_project} -f -
+```
 
+## Miscellaneous
+```shell script
 # Build CronJob image
 oc start-build ha-cronjob-${deployment_name} -n ${deployment_project} 
 
