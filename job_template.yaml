@@ -25,17 +25,22 @@ parameters:
 - displayName: Replicas per cluster
   description: The desired number of replicas running in each cluster
   name: REPLICAS_PER_CLUSTER
-  value: 3
+  value: "3"
+- displayName: Deployment project
+  description: Project the application deployment resides in
+  name: DEPLOYMENT_PROJECT
+  required: true
 - displayName: OpenShift Version
   description: Version of OpenShift. Must match http://mirror.openshift.com/pub/openshift-v4/clients/oc tags (e.g. 4.2, 4.2.10-201911290432.git.0.888f9c6.el7, latest)
   name: OC_VERSION
-  value: 4.2
+  value: "4.2"
 objects:
 # ImageStream
 - apiVersion: image.openshift.io/v1
   kind: ImageStream
   metadata:
     name: ha-cronjob-${DEPLOYMENT_NAME}
+    namespace: ${DEPLOYMENT_PROJECT}
     labels:
       app.kubernetes.io/name: ha-cronjob
       app.kubernetes.io/instance: ha-cronjob-${DEPLOYMENT_NAME}
@@ -49,6 +54,7 @@ objects:
   kind: BuildConfig
   metadata:
     name: ha-cronjob-${DEPLOYMENT_NAME}
+    namespace: ${DEPLOYMENT_PROJECT}
     labels:
       app.kubernetes.io/name: ha-cronjob
       app.kubernetes.io/instance: ha-cronjob-${DEPLOYMENT_NAME}
@@ -62,15 +68,17 @@ objects:
     source:
       type: Dockerfile
       dockerfile: |
-        FROM ubi8/ubi:latest
+        FROM registry.access.redhat.com/ubi8/ubi:latest
 
         # Install ansible and OpenShift cli
         RUN yum -y install python3-pip \
          && pip3 install ansible \
-         && wget -O /tmp/oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/oc/${OC_VERSION}/linux/oc.tar.gz
-         && tar xvf -C /usr/bin/ /tmp/oc.tar.gz
+         && curl -o /tmp/oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/oc/${OC_VERSION}/linux/oc.tar.gz \
+         && tar xvf /tmp/oc.tar.gz -C /usr/bin \
+         && rm -rf /tmp/oc.tar.gz
 
         # It is assumed the entrypoint will be configured in the job template
+        ENTRYPOINT ["echo", "This image is not meant to be run directly :)"]
     strategy:
       type: Docker
     output:
@@ -83,6 +91,7 @@ objects:
   kind: ConfigMap
   metadata:
     name: ha-cronjob-${DEPLOYMENT_NAME}
+    namespace: ${DEPLOYMENT_PROJECT}
     labels:
       app.kubernetes.io/name: ha-cronjob
       app.kubernetes.io/instance: ha-cronjob-${DEPLOYMENT_NAME}
@@ -98,17 +107,24 @@ objects:
         vars:
           # This clusters API URL (e.g. "https://api.ocp4north.example.domain:6443")
           this_cluster_api_url: "{{ lookup('env', 'THIS_CLUSTER_API_URL') }}"
+
           # Array of cluster api urls
           clusters_array: "{{ lookup('env', 'ALTERNATE_CLUSTER_API_URL_LIST').split(',') + [lookup('env', 'THIS_CLUSTER_API_URL')] }}"
+
           # Whether the application is deployed via Deployment of DeploymentConfig object (e.g. deployment, deploymentconfig). Must be understood by the oc cli
           deployment_or_deploymentconfig: "{{ lookup('env', 'DEPLOYMENT_OR_DEPLOYMENTCONFIG') }}"
+
           # The name of the deployment / deploymentconfig object to scale
           deployment_name: "{{ lookup('env', 'DEPLOYMENT_NAME') }}"
+
           # The namespace the application resides in
           project_name: "{{ lookup('env', 'PROJECT_NAME') }}"
+
           # The desired number of replicas running in each cluster
           replicas_per_cluster: "{{ lookup('env', 'REPLICAS_PER_CLUSTER') }}"
 
+          # The service account the CronJob pod is running as
+          sa_token: "{{ lookup('file', '/var/run/secrets/kubernetes.io/serviceaccount/token') }}"
         tasks:
         - name: Check alternate cluster statuses
           uri:
@@ -146,8 +162,9 @@ objects:
           shell: "/usr/bin/oc
                   login
                   --insecure-skip-tls-verify
-                  --token={{ 'tests' }}
+                  --token={{ sa_token }}
                   --server={{ this_cluster_api_url }}"
+          no_log: true
           changed_when: false
 
         - name: Get current application scale
@@ -174,11 +191,26 @@ objects:
                   -n {{ project_name }}"
           when: (oc_get_dc.stdout | from_yaml).status.replicas | int != adjusted_replicas_per_cluster | int
 
-# CronJob
+# ServiceAccount
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: ha-cronjob-${DEPLOYMENT_NAME}
+    namespace: ${DEPLOYMENT_PROJECT}
+    labels:
+      app.kubernetes.io/name: ha-cronjob
+      app.kubernetes.io/instance: ha-cronjob-${DEPLOYMENT_NAME}
+      app.kubernetes.io/version: 1.0.0
+      app.kubernetes.io/component: serviceaccount
+      app.kubernetes.io/part-of: ${DEPLOYMENT_NAME}
+      app.kubernetes.io/managed-by: openshift
+
+  # CronJob
 - apiVersion: batch/v1beta1
   kind: CronJob
   metadata:
     name: ha-cronjob-${DEPLOYMENT_NAME}
+    namespace: ${DEPLOYMENT_PROJECT}
     labels:
       app.kubernetes.io/name: ha-cronjob
       app.kubernetes.io/instance: ha-cronjob-${DEPLOYMENT_NAME}
@@ -195,12 +227,12 @@ objects:
           spec:
             containers:
             - name: job
-              image: ha-cronjob-${DEPLOYMENT_NAME}:latest
+              image: image-registry.openshift-image-registry.svc:5000/${DEPLOYMENT_PROJECT}/ha-cronjob-${DEPLOYMENT_NAME}:latest
               env:
               - name: THIS_CLUSTER_API_URL
                 value: ${THIS_CLUSTER_API_URL}
               - name: ALTERNATE_CLUSTER_API_URL_LIST
-                value: ${ALTERNATE_CLUSTER_API_URL_LIST
+                value: ${ALTERNATE_CLUSTER_API_URL_LIST}
               - name: DEPLOYMENT_OR_DEPLOYMENTCONFIG
                 value: ${DEPLOYMENT_OR_DEPLOYMENTCONFIG}
               - name: DEPLOYMENT_NAME
@@ -214,9 +246,11 @@ objects:
               command:
               - '/jobscripts/job'
               - '-v'
+              workingDir: /tmp
               volumeMounts:
               - name: job-scripts
                 mountPath: /jobscripts
+            serviceAccountName: ha-cronjob-${DEPLOYMENT_NAME}
             volumes:
             - name: job-scripts
               configMap:
@@ -224,4 +258,5 @@ objects:
                 items:
                 - key: job
                   path: job
+                  mode: 0777
             restartPolicy: Never
