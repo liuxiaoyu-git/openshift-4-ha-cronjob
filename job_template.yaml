@@ -211,7 +211,7 @@ objects:
       app.kubernetes.io/part-of: ${DEPLOYMENT_NAME}
       app.kubernetes.io/managed-by: openshift
 
-  # CronJob
+# CronJob
 - apiVersion: batch/v1beta1
   kind: CronJob
   metadata:
