@@ -224,8 +224,8 @@ objects:
       app.kubernetes.io/part-of: ${DEPLOYMENT_NAME}
       app.kubernetes.io/managed-by: openshift
   spec:
-    # Run every 10 seconds
-    schedule: '*/10 * * * *'
+    # Run every minute
+    schedule: '* * * * *'
     jobTemplate:
       spec:
         template:
