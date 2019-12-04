@@ -249,6 +249,9 @@ objects:
                     fieldPath: metadata.namespace
               - name: REPLICAS_PER_CLUSTER
                 value: ${REPLICAS_PER_CLUSTER}
+              # https://docs.ansible.com/ansible/latest/reference_appendices/config.html#ansible-configuration-settings
+              - name: ANSIBLE_LOCALHOST_WARNING
+                value: "False"
               command:
               - '/jobscripts/job'
               - '-v'
