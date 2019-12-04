@@ -39,7 +39,7 @@ oc process -f job_template.yaml \
   -p THIS_CLUSTER_API_URL=${this_cluster_api_url} \
   -p ALTERNATE_CLUSTER_API_URL_LIST=${alternate_cluster_api_url_list} \
   -p DEPLOYMENT_NAME=${deployment_name} \
-  | oc create -n ${app_project} -f -
+  | oc create -n ${deployment_project} -f -
 ```
 
 ## Template Parameters
