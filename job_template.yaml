@@ -185,6 +185,7 @@ objects:
             - "Healthy Clusters: {{ healthy_clusters }}"
             - "Unhealthy Clusters: {{ unhealthy_clusters }}"
             - "Required application replicas in this cluster: {{ adjusted_replicas_per_cluster | int }}"
+            - "Current application replicas in this cluster: {{ (oc_get_dc.stdout | from_yaml).status.replicas }}"
 
         # This serves both to adjust scale up when clusters are unhealthy
         # or adjust scale down when all clusters are healthy again
