@@ -109,7 +109,7 @@ objects:
           this_cluster_api_url: "{{ lookup('env', 'THIS_CLUSTER_API_URL') }}"
 
           # Array of cluster api urls
-          clusters_array: "{{ lookup('env', 'ALTERNATE_CLUSTER_API_URL_LIST').split(',') + [lookup('env', 'THIS_CLUSTER_API_URL')] }}"
+          alternate_clusters_array: "{{ lookup('env', 'ALTERNATE_CLUSTER_API_URL_LIST').split(',') }}"
 
           # Whether the application is deployed via Deployment of DeploymentConfig object (e.g. deployment, deploymentconfig). Must be understood by the oc cli
           deployment_or_deploymentconfig: "{{ lookup('env', 'DEPLOYMENT_OR_DEPLOYMENTCONFIG') }}"
@@ -125,30 +125,37 @@ objects:
 
           # The service account the CronJob pod is running as
           sa_token: "{{ lookup('file', '/var/run/secrets/kubernetes.io/serviceaccount/token') }}"
+
         tasks:
         - name: Check alternate cluster statuses
           uri:
             url: "{{ item }}/healthz"
             validate_certs: no
             return_content: yes
-          loop: "{{ clusters_array }}"
+          loop: "{{ alternate_clusters_array }}"
           register: get_cluster_statuses
 
         - name: Calculate cluster counts
           set_fact:
-            total_clusters: "{{ clusters_array | count }}"
+            # We add 1 because we assume this cluster is healthy if this job is running
+            # At worst this means we are accidentally running more replicas than we mean to
+            total_clusters: "{{ alternate_clusters_array
+                              | count
+                              + 1 }}"
             healthy_clusters: "{{ get_cluster_statuses.results
                                 | map(attribute='content')
                                 | select('match', '^ok$')
                                 | list
-                                | count }}"
+                                | count
+                                + 1 }}"
             unhealthy_clusters: "{{ get_cluster_statuses.results
                                 | map(attribute='content')
                                 | select('match', '^!ok$')
                                 | list
                                 | count }}"
 
-        - name: Calculated adjusted replicas per cluster
+        # This will be the same as replicas_per_cluster if all clusters are healthy
+        - name: Calculate adjusted replicas per cluster
           set_fact:
             adjusted_replicas_per_cluster: "{{ (total_clusters | int * replicas_per_cluster | int) / healthy_clusters | int
                                               | round(0, 'ceil')
@@ -179,7 +186,9 @@ objects:
             - "Unhealthy Clusters: {{ unhealthy_clusters }}"
             - "Required application replicas in this cluster: {{ adjusted_replicas_per_cluster | int }}"
 
-        - name: Scale application based on cluster health
+        # This serves both to adjust scale up when clusters are unhealthy
+        # or adjust scale down when all clusters are healthy again
+        - name: Scale application
           shell: "/usr/bin/oc
                   scale
                   {{ deployment_or_deploymentconfig }}/{{ deployment_name }}
