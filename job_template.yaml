@@ -29,7 +29,7 @@ parameters:
 - displayName: Passive Cluster
   description: Whether this cluster is a passive cluster in an active-passive configuration
   name: PASSIVE_CLUSTER
-  value: false
+  value: "false"
 - displayName: Deployment project
   description: Project the application deployment resides in
   name: DEPLOYMENT_PROJECT
