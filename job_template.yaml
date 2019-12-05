@@ -10,8 +10,8 @@ parameters:
   description: This clusters API URL (e.g. 'https://api.ocp4north.example.domain:6443')
   name: THIS_CLUSTER_API_URL
   required: true
-- displayName: Alternate cluster API URL List
-  description: Comma separated list of alternate cluster API URLs (e.g. 'https://api.ocp4east.example.domain:6443,https://api.ocp4west.example.domain:6443')
+- displayName: Alternate active cluster API URL List
+  description: Comma separated list of alternate active cluster API URLs (e.g. 'https://api.ocp4east.example.domain:6443,https://api.ocp4west.example.domain:6443')
   name: ALTERNATE_CLUSTER_API_URL_LIST
   required: true
 - displayName: Deployment or DeploymentConfig
@@ -22,10 +22,14 @@ parameters:
   description: The name of the deployment / deploymentconfig object to scale
   name: DEPLOYMENT_NAME
   required: true
-- displayName: Replicas per cluster
-  description: The desired number of replicas running in each cluster
-  name: REPLICAS_PER_CLUSTER
-  value: "3"
+- displayName: Total desired replicas
+  description: The total desired number of replicas running in all clusters. Works best when it is a multiple of all active clusters
+  name: TOTAL_DESIRED_REPLICAS
+  value: "6"
+- displayName: Passive Cluster
+  description: Whether this cluster is a passive cluster in an active-passive configuration
+  name: PASSIVE_CLUSTER
+  value: false
 - displayName: Deployment project
   description: Project the application deployment resides in
   name: DEPLOYMENT_PROJECT
@@ -108,7 +112,7 @@ objects:
           # This clusters API URL (e.g. "https://api.ocp4north.example.domain:6443")
           this_cluster_api_url: "{{ lookup('env', 'THIS_CLUSTER_API_URL') }}"
 
-          # Array of cluster api urls
+          # Array of cluster api urls of all active clusters
           alternate_clusters_array: "{{ lookup('env', 'ALTERNATE_CLUSTER_API_URL_LIST').split(',') }}"
 
           # Whether the application is deployed via Deployment of DeploymentConfig object (e.g. deployment, deploymentconfig). Must be understood by the oc cli
@@ -120,8 +124,11 @@ objects:
           # The namespace the application resides in
           project_name: "{{ lookup('env', 'PROJECT_NAME') }}"
 
-          # The desired number of replicas running in each cluster
-          replicas_per_cluster: "{{ lookup('env', 'REPLICAS_PER_CLUSTER') }}"
+          # How many application replicas running in all active clusters
+          total_desired_replicas: "{{ lookup('env', 'TOTAL_DESIRED_REPLICAS') }}"
+
+          # Whether this cluster is a passive cluster in an active-passive configuration
+          passive_cluster: "{{ lookup('env', 'PASSIVE_CLUSTER') }}"
 
           # The service account the CronJob pod is running as
           sa_token: "{{ lookup('file', '/var/run/secrets/kubernetes.io/serviceaccount/token') }}"
@@ -137,29 +144,37 @@ objects:
 
         - name: Calculate cluster counts
           set_fact:
-            # We add 1 because we assume this cluster is healthy if this job is running
+            # We add 1 if active-active because we assume this cluster is healthy if this job is running
             # At worst this means we are accidentally running more replicas than we mean to
+            # We don't add anything when active-passive
             total_clusters: "{{ alternate_clusters_array
                               | count
-                              + 1 }}"
+                              + ternary(passive_cluster, 0, 1) }}"
             healthy_clusters: "{{ get_cluster_statuses.results
                                 | map(attribute='content')
                                 | select('match', '^ok$')
                                 | list
                                 | count
-                                + 1 }}"
+                                + ternary(passive_cluster, 0, 1) }}"
             unhealthy_clusters: "{{ get_cluster_statuses.results
                                 | map(attribute='content')
                                 | select('match', '^!ok$')
                                 | list
                                 | count }}"
 
-        # This will be the same as replicas_per_cluster if all clusters are healthy
-        - name: Calculate adjusted replicas per cluster
+        - name: Calculate how many replicas to run in this cluster
           set_fact:
-            adjusted_replicas_per_cluster: "{{ (total_clusters | int * replicas_per_cluster | int) / healthy_clusters | int
-                                              | round(0, 'ceil')
-                                              | int }}"
+            # Need to use python ternary syntax for lazy evaluation to avoid ZeroDivisionError
+            # https://github.com/ansible/ansible/issues/38562
+            this_clusters_replicas_active: if passive_cluster 0
+                                           else (total_desired_replicas | int / healthy_clusters | int
+                                                | round(0, 'ceil')
+                                                | int)
+            # Only scale passive cluster up if all other clusters are unhealthy
+            this_clusters_replicas_passive: 0 if health_clusters != 0 else total_desired_replicas | int
+
+        - name: Set replica count for this cluster
+          this_clusters_replicas: if passive_cluster this_clusters_replicas_passive else this_clusters_replicas_active
 
         - name: Log in to this cluster
           shell: "/usr/bin/oc
@@ -182,9 +197,10 @@ objects:
         - name: Print job analysis details
           debug:
             msg:
+            - "This cluster is cofigured to be {{ ternary(passive_cluster | bool, "PASSIVE", "ACTIVE" }}"
             - "Healthy Clusters: {{ healthy_clusters }}"
             - "Unhealthy Clusters: {{ unhealthy_clusters }}"
-            - "Required application replicas in this cluster: {{ adjusted_replicas_per_cluster | int }}"
+            - "Required application replicas in this cluster: {{ this_clusters_replicas | int }}"
             - "Current application replicas in this cluster: {{ (oc_get_dc.stdout | from_yaml).status.replicas }}"
 
         # This serves both to adjust scale up when clusters are unhealthy
@@ -193,9 +209,9 @@ objects:
           shell: "/usr/bin/oc
                   scale
                   {{ deployment_or_deploymentconfig }}/{{ deployment_name }}
-                  --replicas {{ adjusted_replicas_per_cluster | int }}
+                  --replicas {{ this_clusters_replicas | int }}
                   -n {{ project_name }}"
-          when: (oc_get_dc.stdout | from_yaml).status.replicas | int != adjusted_replicas_per_cluster | int
+          when: (oc_get_dc.stdout | from_yaml).status.replicas | int != this_clusters_replicas | int
 
 # ServiceAccount
 - apiVersion: v1
@@ -247,8 +263,8 @@ objects:
                 valueFrom:
                   fieldRef:
                     fieldPath: metadata.namespace
-              - name: REPLICAS_PER_CLUSTER
-                value: ${REPLICAS_PER_CLUSTER}
+              - name: TOTAL_DESIRED_REPLICAS
+                value: ${TOTAL_DESIRED_REPLICAS}
               # https://docs.ansible.com/ansible/latest/reference_appendices/config.html#ansible-configuration-settings
               - name: ANSIBLE_LOCALHOST_WARNING
                 value: "False"

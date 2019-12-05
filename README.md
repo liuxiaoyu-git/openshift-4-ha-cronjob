@@ -10,16 +10,29 @@ To maintain a consistent number of stateless application replicas across multipl
 
 The main mechanism that achieves this goal is a [CronJob](https://docs.openshift.com/container-platform/latest/nodes/jobs/nodes-nodes-jobs.html) running alongside each application [Deployment/DeploymentConfig](https://docs.openshift.com/container-platform/latest/applications/deployments/what-deployments-are.html) in each cluster.
 
-The CronJob is given the Cluster API URL for each external cluster and monitors their [/healthz](https://github.com/openshift/origin/blob/master/docs/proposals/instrumentation-of-services.md) endpoint. When a non ```200 ok``` response is detected the number of application replicas is adjusted to ensure a consistent number of replicas across all remaining clusters.
+### Active-Active (2+N Active Clusters)
 
-![Diagram](diagram.png)
+The CronJob in each cluster is given the Cluster API URL for each _other_ cluster and monitors their [/healthz](https://github.com/openshift/origin/blob/master/docs/proposals/instrumentation-of-services.md) endpoint. When a non ```200 ok``` response is detected the number of application replicas is adjusted to ensure a consistent number of replicas across all remaining clusters.
 
-For example lets use the situation where there are 3 OpenShift clusters with 2 application replicas in each.
+Each cluster is responsible for maintaining its own replica count and assumes each _other_ cluster is configured to do the same.
 
-If a single cluster goes down each remaining cluster will increase its capacity by 1.
+![Acive-Active](active-active.png)
+
+For example with 3 OpenShift clusters configured to be active with 2 application replicas in each.
+
+If a single cluster goes down each remaining clusters will increase their capacity by 1.
 If two clusters go down the remaining cluster will increase its capacity by 4.
 
-When the CronJob detects that the alternate clusters are helathy they will scale the application back down to its original replica count.
+When the CronJob detects that the alternate clusters are healthy they will scale the application replicas back down to its original replica count of 2.
+
+### Active-Passive (1+N Active Clusters, 1 Passive Cluster)
+
+The CronJob in each active cluster is configured as described above in the Active-Active configuration with the Cluster API URL's for each _other_ *active* cluster. If there are only two clusters, one active and one passive, the active cluster does not need to be configured with the CronJob.
+The CronJob in the single Passive cluster is also configured with the Cluster API Url's for each active cluster and will scale its application replicas to 0.
+
+If all active clusters are unhealthy the passive cluster will scale the number of application replicas it is responsible for from 0 to the total desired replica count.
+
+![Active-Passive](active-passive.png)
 
 ## Quickstart 
 
