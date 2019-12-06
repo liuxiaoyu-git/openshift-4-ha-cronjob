@@ -1,6 +1,6 @@
 # OpenShift 4 HA CronJob
 
-OpenShift template to deploy a CronJob suitable for maintaining a desired number of application replicas accross multiple OpenShift clusters.
+OpenShift template to deploy a CronJob suitable for maintaining a desired number of application replicas across multiple OpenShift clusters.
 
 ## What problem does this solve?
 
