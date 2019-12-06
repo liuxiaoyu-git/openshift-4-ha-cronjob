@@ -1,4 +1,4 @@
-# OpenShift 4 HA CronJob
+# OpenShift HA CronJob
 
 OpenShift template to deploy a CronJob suitable for maintaining a desired number of application replicas across multiple OpenShift clusters.
 
@@ -33,6 +33,12 @@ The CronJob in the single Passive cluster is also configured with the Cluster AP
 If all active clusters are unhealthy the passive cluster will scale the number of application replicas it is responsible for from 0 to the total desired replica count.
 
 ![Active-Passive](active-passive.png)
+
+## Does this branch work with OpenShift 3?
+
+No. This branch is intended to work against 4.x clusters only. There is another branch that should work against 3.x clusters.
+
+The main constraint with having this work across the 3-4 cluster boundary is the oc client version in the BuildConfig and the image registry DNS name in the CronJob. 
 
 ## Quickstart 
 
