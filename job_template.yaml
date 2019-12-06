@@ -227,6 +227,20 @@ objects:
       app.kubernetes.io/part-of: ${DEPLOYMENT_NAME}
       app.kubernetes.io/managed-by: openshift
 
+# RoleBinding
+- apiVersion: authorization.openshift.io/v1
+  kind: RoleBinding
+  metadata:
+    name: ha-cronjob-${DEPLOYMENT_NAME}-edit
+    namespace: ${DEPLOYMENT_PROJECT}
+  roleRef:
+    name: edit
+  subjects:
+  - kind: SystemUser
+    name: system:serviceaccount:${DEPLOYMENT_PROJECT}:ha-cronjob-${DEPLOYMENT_NAME}
+  userNames:
+  - system:serviceaccount:${DEPLOYMENT_PROJECT}:ha-cronjob-${DEPLOYMENT_NAME}
+
 # CronJob
 - apiVersion: batch/v1beta1
   kind: CronJob
