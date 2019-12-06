@@ -146,8 +146,10 @@ objects:
         - name: Print cluster responses
           debug:
             msg:
-            - "Cluster: {{ item.key }}"
-            - "/healthz Response: {{ item.value }}"
+            - "Cluster:"
+            - "{{ item.key }}"
+            - "/healthz Response:"
+            - "{{ item.value }}"
           with_dict: "{{ dict(alternate_clusters_array| zip(get_cluster_statuses.results | map(attribute='content') | list)) }}"
 
         - name: Calculate cluster counts
@@ -164,11 +166,12 @@ objects:
                                 | list
                                 | count
                                 + (passive_cluster | ternary(0, 1) | int) }}"
+            # https://www.regextester.com/15
             unhealthy_clusters: "{{ get_cluster_statuses.results
-                                | map(attribute='content')
-                                | select('match', '^!ok$')
-                                | list
-                                | count }}"
+                                  | map(attribute='content')
+                                  | select('match', '^((?!ok).)*$')
+                                  | list
+                                  | count }}"
 
         - name: Calculate how many replicas to run in this cluster
           set_fact:
