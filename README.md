@@ -92,5 +92,6 @@ oc create job -n ${deployment_project} --from=cronjob/ha-cronjob-${deployment_na
 oc delete all -l app.kubernetes.io/instance=ha-cronjob-${deployment_name} -n ${deployment_project}
 oc delete sa ha-cronjob-${deployment_name} -n ${deployment_project}
 oc delete cm ha-cronjob-${deployment_name} -n ${deployment_project}
+oc delete rolebinding cm ha-cronjob-${deployment_name}-edit -n ${deployment_project}
 ```
 
