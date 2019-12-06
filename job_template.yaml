@@ -35,9 +35,9 @@ parameters:
   name: DEPLOYMENT_PROJECT
   required: true
 - displayName: OpenShift Version
-  description: Version of OpenShift. Must match http://mirror.openshift.com/pub/openshift-v3/clients tags (e.g. 3.11.157, 3.11.130)
+  description: Version of OpenShift. Must match http://mirror.openshift.com/pub/openshift-v4/clients/oc tags (e.g. 4.2, 4.2.10-201911290432.git.0.888f9c6.el7, latest)
   name: OC_VERSION
-  value: "3.11.157"
+  value: "4.2"
 objects:
 # ImageStream
 - apiVersion: image.openshift.io/v1
@@ -77,7 +77,7 @@ objects:
         # Install ansible and OpenShift cli
         RUN yum -y install python3-pip \
          && pip3 install ansible \
-         && curl -o /tmp/oc.tar.gz https://mirror.openshift.com/pub/openshift-v3/clients/${OC_VERSION}/linux/oc.tar.gz \
+         && curl -o /tmp/oc.tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/oc/${OC_VERSION}/linux/oc.tar.gz \
          && tar xvf /tmp/oc.tar.gz -C /usr/bin \
          && rm -rf /tmp/oc.tar.gz
 
@@ -274,7 +274,7 @@ objects:
           spec:
             containers:
             - name: job
-              image: docker-registry.default.svc:5000/${DEPLOYMENT_PROJECT}/ha-cronjob-${DEPLOYMENT_NAME}:latest
+              image: image-registry.openshift-image-registry.svc:5000/${DEPLOYMENT_PROJECT}/ha-cronjob-${DEPLOYMENT_NAME}:latest
               env:
               - name: THIS_CLUSTER_API_URL
                 value: ${THIS_CLUSTER_API_URL}
