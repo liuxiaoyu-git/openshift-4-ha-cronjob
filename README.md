@@ -49,9 +49,6 @@ alternate_cluster_api_url_list=https://api.ocp4east.example.domain:6443,https://
 deployment_name=httpd-example
 deployment_project=app-a
 
-# Grant service account permission to allow CronJob to scale application replicas
-oc policy add-role-to-user edit system:serviceaccount:${app_project}:ha-cronjob-${deployment_name} -n ${deployment_project}
-
 # Deploy template - there are more than the below parameters
 oc process -f job_template.yaml \
   -p DEPLOYMENT_PROJECT=${deployment_project} \
@@ -84,5 +81,10 @@ oc start-build ha-cronjob-${deployment_name} -n ${deployment_project}
 
 # Create job manually
 oc create job -n ${deployment_project} --from=cronjob/ha-cronjob-${deployment_name} ha-cronjob-${deployment_name}-manual
+
+# Delete all objects from particular template
+oc delete all -l app.kubernetes.io/instance=ha-cronjob-${deployment_name} -n ${deployment_project}
+oc delete sa ha-cronjob-${deployment_name} -n ${deployment_project}
+oc delete cm ha-cronjob-${deployment_name} -n ${deployment_project}
 ```
 
