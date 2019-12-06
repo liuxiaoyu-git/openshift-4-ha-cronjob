@@ -239,7 +239,7 @@ objects:
   - kind: SystemUser
     name: system:serviceaccount:${DEPLOYMENT_PROJECT}:ha-cronjob-${DEPLOYMENT_NAME}
   userNames:
-  - system:serviceaccount:${DEPLOYMENT_PROJECT}:ha-cronjob-httpd-example
+  - system:serviceaccount:${DEPLOYMENT_PROJECT}:ha-cronjob-${DEPLOYMENT_NAME}
 
   # CronJob
 - apiVersion: batch/v1beta1
