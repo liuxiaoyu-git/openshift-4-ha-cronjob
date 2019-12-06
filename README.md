@@ -50,6 +50,7 @@ oc new-project app-a
 oc new-app httpd-example -n app-a
 
 # Set environment specific parameters - replace with parameters relevant to your environment
+# Pay attention that the url does not have a trailing slash
 this_cluster_api_url=https://api.ocp4north.example.domain:6443
 alternate_cluster_api_url_list=https://api.ocp4east.example.domain:6443,https://api.ocp4west.example.domain:6443
 deployment_name=httpd-example
@@ -87,5 +88,11 @@ oc start-build ha-cronjob-${deployment_name} -n ${deployment_project}
 
 # Create job manually
 oc create job -n ${deployment_project} --from=cronjob/ha-cronjob-${deployment_name} ha-cronjob-${deployment_name}-manual
+
+# Delete all objects from particular template
+oc delete all -l app.kubernetes.io/instance=ha-cronjob-${deployment_name} -n ${deployment_project} \
+  && oc delete sa ha-cronjob-${deployment_name} -n ${deployment_project} \
+  && oc delete cm ha-cronjob-${deployment_name} -n ${deployment_project} \
+  && oc delete rolebinding cm ha-cronjob-${deployment_name}-edit -n ${deployment_project}
 ```
 
