@@ -263,7 +263,7 @@ objects:
           spec:
             containers:
             - name: job
-              image: image-registry.openshift-image-registry.svc:5000/${DEPLOYMENT_PROJECT}/ha-cronjob-${DEPLOYMENT_NAME}:latest
+              image: docker-registry.default.svc:5000/${DEPLOYMENT_PROJECT}/ha-cronjob-${DEPLOYMENT_NAME}:latest
               env:
               - name: THIS_CLUSTER_API_URL
                 value: ${THIS_CLUSTER_API_URL}
