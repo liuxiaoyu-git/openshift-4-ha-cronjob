@@ -143,6 +143,13 @@ objects:
           failed_when: false
           register: get_cluster_statuses
 
+        - name: Print cluster responses
+          debug:
+            msg:
+            - "Cluster: {{ item.key }}"
+            - "/healthz Response: {{ item.value }}"
+          with_dict: "{{ dict(alternate_clusters_array| zip(get_cluster_statuses.results | map(attribute='content') | list)) }}"
+
         - name: Calculate cluster counts
           # We add 1 if active-active because we assume this cluster is healthy if this job is running
           # At worst this means we are accidentally running more replicas than we mean to
@@ -258,6 +265,7 @@ objects:
       app.kubernetes.io/part-of: ${DEPLOYMENT_NAME}
       app.kubernetes.io/managed-by: openshift
   spec:
+    concurrencyPolicy: Forbid
     # Run every minute
     schedule: '* * * * *'
     jobTemplate:
