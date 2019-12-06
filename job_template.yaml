@@ -241,7 +241,7 @@ objects:
   userNames:
   - system:serviceaccount:${DEPLOYMENT_PROJECT}:ha-cronjob-${DEPLOYMENT_NAME}
 
-  # CronJob
+# CronJob
 - apiVersion: batch/v1beta1
   kind: CronJob
   metadata:
