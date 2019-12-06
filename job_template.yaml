@@ -140,22 +140,23 @@ objects:
             validate_certs: no
             return_content: yes
           loop: "{{ alternate_clusters_array }}"
+          failed_when: false
           register: get_cluster_statuses
 
         - name: Calculate cluster counts
+          # We add 1 if active-active because we assume this cluster is healthy if this job is running
+          # At worst this means we are accidentally running more replicas than we mean to
+          # We don't add anything when active-passive
           set_fact:
-            # We add 1 if active-active because we assume this cluster is healthy if this job is running
-            # At worst this means we are accidentally running more replicas than we mean to
-            # We don't add anything when active-passive
             total_clusters: "{{ alternate_clusters_array
                               | count
-                              + ternary(passive_cluster, 0, 1) }}"
+                              + (passive_cluster | ternary(0, 1) | int) }}"
             healthy_clusters: "{{ get_cluster_statuses.results
                                 | map(attribute='content')
                                 | select('match', '^ok$')
                                 | list
                                 | count
-                                + ternary(passive_cluster, 0, 1) }}"
+                                + (passive_cluster | ternary(0, 1) | int) }}"
             unhealthy_clusters: "{{ get_cluster_statuses.results
                                 | map(attribute='content')
                                 | select('match', '^!ok$')
@@ -166,15 +167,17 @@ objects:
           set_fact:
             # Need to use python ternary syntax for lazy evaluation to avoid ZeroDivisionError
             # https://github.com/ansible/ansible/issues/38562
-            this_clusters_replicas_active: if passive_cluster 0
-                                           else (total_desired_replicas | int / healthy_clusters | int
-                                                | round(0, 'ceil')
-                                                | int)
+            this_clusters_replicas_active: "{{ 0 if (passive_cluster | bool)
+                                               else (total_desired_replicas | int / healthy_clusters | int | round(0, 'ceil') | int) }}"
+
             # Only scale passive cluster up if all other clusters are unhealthy
-            this_clusters_replicas_passive: 0 if health_clusters != 0 else total_desired_replicas | int
+            this_clusters_replicas_passive: "{{ 0 if (healthy_clusters != 0)
+                                                else total_desired_replicas | int }}"
 
         - name: Set replica count for this cluster
-          this_clusters_replicas: if passive_cluster this_clusters_replicas_passive else this_clusters_replicas_active
+          set_fact:
+            this_clusters_replicas: "{{ this_clusters_replicas_passive if (passive_cluster | bool)
+                                        else this_clusters_replicas_active }}"
 
         - name: Log in to this cluster
           shell: "/usr/bin/oc
@@ -197,7 +200,7 @@ objects:
         - name: Print job analysis details
           debug:
             msg:
-            - "This cluster is cofigured to be {{ ternary(passive_cluster | bool, "PASSIVE", "ACTIVE" }}"
+            - "This cluster is configured: {{ passive_cluster | ternary('PASSIVE', 'ACTIVE') }}"
             - "Healthy Clusters: {{ healthy_clusters }}"
             - "Unhealthy Clusters: {{ unhealthy_clusters }}"
             - "Required application replicas in this cluster: {{ this_clusters_replicas | int }}"
@@ -284,7 +287,6 @@ objects:
                 value: "False"
               command:
               - '/jobscripts/job'
-              - '-v'
               workingDir: /tmp
               volumeMounts:
               - name: job-scripts
